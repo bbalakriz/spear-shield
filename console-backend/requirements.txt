@@ -1,4 +1,7 @@
+# exact pins below, not ranges: an unpinned package here re-resolves to
+# whatever is newest on pypi at build time, which is how the evalhub
+# confidential-data-provider image broke between two rebuilds a day apart
 kfp==2.17.0
-boto3
-kubernetes
-pyyaml
+boto3==1.43.118
+kubernetes==30.1.0
+pyyaml==6.0.3

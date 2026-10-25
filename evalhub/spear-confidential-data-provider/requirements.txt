@@ -2,11 +2,24 @@
 # newer 1.0.5 this index resolves to by default; the sidecar's wire
 # protocol was only proven against 0.4.4
 eval-hub-sdk==0.4.4
-# transitive deps of evalhub.adapter.oci.persister, pip does not pull them in
-oras
-olot
-presidio-analyzer
-spacy
+# transitive deps of evalhub.adapter.oci.persister, pip does not pull them in.
+# exact pins below, not ranges: an unpinned package re-resolves to whatever
+# is newest on pypi at build time, which is how preshed broke this same
+# image between two rebuilds a day apart, see the spacy/preshed comment below
+oras==0.2.43
+olot==1.2.1
+# same story for evalhub.adapter.mlflow, pip does not pull this one in either
+httpx==0.28.1
+presidio-analyzer==2.2.364
+# loading en_core_web_lg crashes with OverflowError: Python int too large
+# to convert to C ssize_t. not a spacy version problem, confirmed by
+# bisecting each native dep in isolation: spacy ships a precompiled
+# tokenizer extension built against preshed's struct layout at a point in
+# time, and preshed 3.0.10+ changed that layout without bumping its own
+# api version, so any spacy wheel built before that silently reads garbage
+# memory at runtime. pinning preshed keeps it on the layout spacy expects
+spacy==3.7.5
+preshed==3.0.9
 # reads coordinator-agent traces straight out of mlflow instead of
 # calling the live agent, same reason export_ragas_dataset.py uses it
-mlflow-skinny
+mlflow-skinny==3.17.2
