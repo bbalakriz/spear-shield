@@ -599,6 +599,9 @@ sandbox status:  oc get sandbox -n ${AGENTS_NS}
 if a sandbox was ever recreated under a new name, confirm the coordinator's spiffe identity still resolves:
   oc get pod -n ${AGENTS_NS} -l openshell.ai/managed-by=openshell -o jsonpath='{.items[0].metadata.labels.agents\.x-k8s\.io/sandbox-name-hash}{"\n"}'
   (compare against manifests/spear-agents/06-cluster-spiffeid.yaml's podSelector value, patch if it differs)
+
+  next step:
+  ./scripts/10-install-evalhub.sh
 EOF
 }
 

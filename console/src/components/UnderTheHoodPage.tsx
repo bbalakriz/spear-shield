@@ -94,20 +94,20 @@ const ACCESS_CONTROL_SCENARIOS: Scenario[] = [
     id: 'workload-identity',
     title: 'Agent workload identity check',
     intro:
-      'The coordinator agent calls the retrieval agent with no token of its own, OpenShell injects a valid credential into outbound calls by exchanging a SPIRE issued JWT SVID with Keycloak (Federated JWT) for a real access token',
+      'The coordinator agent calls the retrieval agent with no token of its own, OpenShell injects a valid credential into outbound calls by exchanging a SPIRE issued JWT SVID with Keycloak (Federated JWT) for a access token',
     enforcedBy: 'spire ClusterSPIFFEID -> keycloak federated-jwt client_credentials grant -> AuthPolicy spear-retrieval-a2a-auth',
   },
   {
     id: 'identity-rejected',
     title: 'Identity rejected at the MCP gateway',
-    intro: 'A caller with no real identity is rejected before any agent logic ever runs.',
+    intro: 'A caller with no identity is rejected before any agent logic ever runs.',
     enforcedBy: 'Authorino AuthPolicy spear-retrieval-a2a-auth -> a2a gateway',
   },
   {
     id: 'tool-scope-and-assignee',
     title: 'Tool scope and assignee enforcement',
     intro:
-      'Three real callers against the OpenProject work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item and a caller acting on their own item succeeds.',
+      'Three callers against the OpenProject work tracker: a caller lacking the role is blocked at the gateway, a caller holding the role is blocked by this project\u2019s own assignee check on someone else\u2019s item and a caller acting on their own item succeeds.',
     enforcedBy: 'Authorino AuthPolicy spear-mcp-gateway-tools-auth -> mcp gateway',
   },
 ];
