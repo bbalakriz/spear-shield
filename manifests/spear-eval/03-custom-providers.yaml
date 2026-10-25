@@ -1,0 +1,98 @@
+# custom evalhub provider images (stock 3.5.1 ragas/ibm-clear not registered). see docs/decisions.md D12
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: community-ragas-v062
+  namespace: redhat-ods-applications
+  labels:
+    trustyai.opendatahub.io/evalhub-provider-name: ragas-v062
+    trustyai.opendatahub.io/evalhub-provider-type: system
+data:
+  ragas-v062.yaml: |
+    id: ragas-v062
+    name: RAGAS
+    title: RAGAS
+    description: >
+      Retrieval Augmented Generation Assessment — evaluates RAG pipeline quality
+      using metrics like faithfulness, answer relevancy, context precision/recall,
+      and more. Models are accessed via OpenAI-compatible endpoints.
+    runtime:
+      k8s:
+        image: quay.io/evalhub/community-ragas:v0.6.2
+        entrypoint:
+          - python
+          - main.py
+        cpu_request: 100m
+        memory_request: 128Mi
+        cpu_limit: 1000m
+        memory_limit: 2Gi
+      local:
+        command: python tests/features/test_data/runtime/main.py
+    benchmarks:
+      - id: ragas_rag_default
+        name: RAG Default Suite
+        description: Default RAG evaluation with answer relevancy, context precision, faithfulness, and context recall
+        category: rag_evaluation
+        metrics:
+          - answer_relevancy
+          - context_precision
+          - faithfulness
+          - context_recall
+        tags:
+          - ragas
+          - rag
+          - default
+        primary_score:
+          metric: faithfulness
+          lower_is_better: false
+        pass_criteria:
+          threshold: 0.5
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: community-ibm-clear-v060
+  namespace: redhat-ods-applications
+  labels:
+    trustyai.opendatahub.io/evalhub-provider-name: ibm-clear-v060
+    trustyai.opendatahub.io/evalhub-provider-type: system
+data:
+  ibm-clear-v060.yaml: |
+    id: ibm-clear-v060
+    name: IBM CLEAR
+    title: IBM CLEAR
+    description: IBM CLEAR evaluation framework for error analysis and reporting
+    runtime:
+      k8s:
+        image: quay.io/evalhub/community-ibm-clear:v0.6.0
+        entrypoint:
+          - python
+          - main.py
+        cpu_request: 100m
+        memory_request: 128Mi
+        cpu_limit: 500m
+        memory_limit: 1Gi
+      local:
+        command: python tests/features/test_data/runtime/main.py
+    benchmarks:
+      - id: agentic-evaluation
+        name: Agentic Evaluation
+        description: Agentic evaluation that identifies error categories from agent traces and quantifies their frequencies
+        category: error-analysis
+        metrics:
+          - total_interactions
+          - total_issues
+          - interactions_with_issues
+          - interactions_no_issues
+          - total_agents
+          - pct_interactions_with_issues
+          - issues_per_interaction
+          - average_score
+        tags:
+          - erroranalysis
+          - ibmclear
+        primary_score:
+          metric: average_score
+          lower_is_better: false
+        pass_criteria:
+          threshold: 0.5

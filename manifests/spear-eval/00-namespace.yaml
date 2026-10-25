@@ -1,0 +1,5 @@
+# evalhub home namespace (multi tenant mode). see docs/decisions.md D7
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-eval

@@ -1,0 +1,27 @@
+# agent sandboxes mlflow tracing RBAC (cross namespace like 02-mlflow-rbac.yaml)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-agents-caller
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-agents-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: spear-coordinator-mlflow-caller
+    namespace: spear-agents
+  - kind: ServiceAccount
+    name: spear-retrieval-mlflow-caller
+    namespace: spear-agents
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-agents-caller
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,65 @@
+# openshell network policy for retrieval sandbox egress
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /opt
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: best_effort
+network_policies:
+  cluster_rag_relay:
+    name: cluster-rag-relay
+    endpoints:
+      # rag via relay in spear-data; sandbox cannot use raw tcp/sql to pgvector on this openshell build
+      - host: spear-shield-rag-query-relay.spear-data.svc.cluster.local
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_mcp:
+    name: cluster-mcp
+    endpoints:
+      # mcp gateway; set Host to MCP_PUBLIC hostname (see MCP_GATEWAY_HOST_HEADER in main.py)
+      - host: spear-mcp-gateway-istio.spear-agents.svc.cluster.local
+        port: 8080
+        protocol: mcp
+        # mcp protocol: use allow_all_known_mcp_methods, not enforcement/access fields
+        mcp:
+          allow_all_known_mcp_methods: true
+        allowed_ips:
+          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_mlflow:
+    name: cluster-mlflow
+    endpoints:
+      # mlflow route hostname; no allowed_ips (apps route is outside cluster/service CIDRs)
+      - host: MLFLOW_HOST_PLACEHOLDER
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*

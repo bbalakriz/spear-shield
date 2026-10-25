@@ -1,0 +1,25 @@
+# demo username to spear-agents password map for console backend password grant (copied from realm import)
+# lives in spear-console so the backend pod can mount it (secrets are namespace local)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-shield-console-creds
+  namespace: spear-console
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+type: Opaque
+stringData:
+  balakrishnan.b: ConsoleTest#2026
+  siddhartha.de: ConsoleTest#2026
+---
+# spear-coordinator client secret for password grant (matches realm import)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-client-secret
+  namespace: spear-console
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+type: Opaque
+stringData:
+  client-secret: f505e68dafacd8e440db4fef433366974f49079da21d8f28

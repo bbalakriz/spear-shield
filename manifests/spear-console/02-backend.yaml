@@ -1,0 +1,126 @@
+# console plugin backend: SA, node reader RBAC, deployment (image from console-backend/)
+# route URLs injected by scripts/08-install-console.sh; kfp calls use the signed in user token, not this SA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-console-backend
+  namespace: spear-console
+---
+# node reader for kata vs runc demo (_node_status); no resourceNames pin (dynamic placement)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: owner-console-backend-node-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: owner-console-backend-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: ClusterRole
+  name: owner-console-backend-node-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-console-backend
+  namespace: spear-console
+  labels:
+    app: spear-console-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-console-backend
+  template:
+    metadata:
+      labels:
+        app: spear-console-backend
+    spec:
+      serviceAccountName: spear-console-backend
+      containers:
+        - name: backend
+          image: image-registry.openshift-image-registry.svc:5000/spear-console/spear-console-backend:latest
+          env:
+            # read only use of the same shared minio credential every other
+            # pipeline component in this project already uses, see
+            # pipelines/corpus_prepare/pipeline.py's _use_minio_creds. this
+            # backend only ever calls get_object/list_objects_v2 with it
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-dsp-creds
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-dsp-creds
+                  key: secretkey
+          ports:
+            - containerPort: 8443
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "96Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/tls/private
+              readOnly: true
+            # spear shield chat's own per persona password lookup and
+            # client secret, see manifests/spear-console/01-chat-creds.yaml
+            - name: spear-shield-creds
+              mountPath: /secrets/spear-shield-console-creds
+              readOnly: true
+            - name: spear-coordinator-client-secret
+              mountPath: /secrets/spear-coordinator-client-secret
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: spear-console-backend-tls
+        - name: spear-shield-creds
+          secret:
+            secretName: spear-shield-console-creds
+        - name: spear-coordinator-client-secret
+          secret:
+            secretName: spear-coordinator-client-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-console-backend
+  namespace: spear-console
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: spear-console-backend-tls
+spec:
+  selector:
+    app: spear-console-backend
+  ports:
+    - port: 8443
+      targetPort: 8443

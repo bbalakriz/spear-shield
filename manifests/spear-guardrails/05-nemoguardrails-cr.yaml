@@ -1,0 +1,26 @@
+# nemoguardrails operator CR; no extra envoy filter field on this build
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: spear-guardrails
+  namespace: spear-guardrails
+  annotations:
+    security.opendatahub.io/enable-auth: 'true'
+spec:
+  nemoConfigs:
+    - name: internal-docs-config
+      configMaps:
+        - internal-docs-config
+      default: true
+    - name: vendor-submission-config
+      configMaps:
+        - vendor-submission-config
+    - name: work-tracker-config
+      configMaps:
+        - work-tracker-config
+    - name: coordinator-agent-config
+      configMaps:
+        - coordinator-agent-config
+  env:
+    - name: OPENAI_API_KEY
+      value: not-used

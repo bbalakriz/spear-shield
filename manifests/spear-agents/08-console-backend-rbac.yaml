@@ -1,0 +1,33 @@
+# console backend RBAC for architecture status and security trace reads in spear-agents
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-sandbox-reader
+  namespace: spear-agents
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    resourceNames: [default--spear-coordinator, default--spear-retrieval]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    resourceNames: [default--spear-coordinator, default--spear-retrieval]
+    # (connect_get_namespaced_pod_exec) resolves to rbac verb "get", not
+    # the "create" every doc and kubectl auth can-i example describes
+    # a real 403 surfaced exactly that verb name, both kept here rather
+    # than guessed from docs alone
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-sandbox-reader
+  namespace: spear-agents
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-sandbox-reader
+  apiGroup: rbac.authorization.k8s.io

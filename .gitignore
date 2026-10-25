@@ -1,0 +1,22 @@
+.secrets-backup/
+*.dockerconfigjson
+*.md
+!seed-data/raw-intake/*.md
+!Detailed architecture.md
+!README.md
+!docs/decisions.md
+*.rtf
+*.pptx
+.venv-kfp/
+.venv/
+venv/
+*.docx
+__pycache__/
+*.pyc
+*.excalidraw
+drawings/
+mockups/
+archive/*
+.claude/
+.hermes/
+*.drawio

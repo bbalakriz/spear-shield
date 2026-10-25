@@ -1,0 +1,52 @@
+# project namespaces; applied first by scripts/01-install-namespaces.sh
+# rag-phase1 is not recreated. spear-agents namespace object stays in manifests/spear-agents/00-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-data
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-inference
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+    opendatahub.io/dashboard: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-guardrails
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-pipelines
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+    opendatahub.io/dashboard: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-console
+  labels:
+    app.kubernetes.io/part-of: rag-phase1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-worktracker
+  labels:
+    app.kubernetes.io/part-of: spear-agents

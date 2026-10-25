@@ -1,0 +1,144 @@
+# recurring eval cycle cronjob for demo window
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+---
+# route read and spear-eval-caller token mint for evalhub API calls
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+rules:
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    resourceNames: ["evalhub"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["spear-eval-caller"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+# kfp helper job RBAC in spear-agents (mlflow caller token, jobs, pod logs)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-agents
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["spear-coordinator-mlflow-caller"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-agents
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+# minio-root-creds read in minio ns for ragas dataset upload job
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-cycle-runner
+  namespace: minio
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["minio-root-creds"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evalhub-cycle-runner
+  namespace: minio
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-cycle-runner
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: evalhub-cycle-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+spec:
+  # suspended by default; daily 06:00 when enabled
+  schedule: "0 6 * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # 2700s: ragas/ibm-clear jobs can exceed 90s; see scripts/11-submit-evalhub-jobs.sh
+      activeDeadlineSeconds: 2700
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: evalhub-cycle-runner
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cycle-runner
+              # pin image digest; bump after rebuild (IfNotPresent will not refresh :latest)
+              image: image-registry.openshift-image-registry.svc:5000/spear-eval/evalhub-cycle-runner@sha256:6bac2ae1b5ed7f0026e65fff92476dc19afdc6d5f57d6714a48f70faaa0aa5f0
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

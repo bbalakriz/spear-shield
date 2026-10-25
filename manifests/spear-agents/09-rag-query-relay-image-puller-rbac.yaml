@@ -1,0 +1,14 @@
+# lets rag-query-relay pull agent images from openshift internal registry
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-data-image-puller
+  namespace: spear-agents
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-puller
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: spear-data

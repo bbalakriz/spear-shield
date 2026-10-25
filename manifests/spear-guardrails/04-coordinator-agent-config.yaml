@@ -1,0 +1,55 @@
+# nemoguardrails config for coordinator agent
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coordinator-agent-config
+  namespace: spear-guardrails
+data:
+  config.yaml: |
+    passthrough: true
+    models:
+      - type: main
+        engine: openai
+        parameters:
+          base_url: "http://spear-ogx-service.spear-inference.svc.cluster.local:8321/v1"
+          model_name: "openai/publishers/prelude-maas/models/glm-53-flash"
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - CREDIT_CARD
+              - US_SSN
+          output:
+            entities:
+              - EMAIL_ADDRESS
+              - CREDIT_CARD
+              - US_SSN
+        regex_detection:
+          input:
+            patterns:
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+            case_insensitive: true
+          # output side is what closed loop actually needs: the leak scanner
+          # scores model answers, not user prompts, so tighten must land here
+          # for a re ask of the same natural question to get blocked
+          output:
+            patterns: []
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+      output:
+        flows:
+          - detect sensitive data on output
+          - regex check output
+  rails.co: |
+    # built in rails only, same shape as work-tracker-config

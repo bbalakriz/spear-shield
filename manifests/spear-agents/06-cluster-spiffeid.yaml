@@ -1,0 +1,27 @@
+# ClusterSPIFFEID for openshell sandbox pods (selector uses sandbox name hash)
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: spear-agents-sandboxes
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  # trust domain from ztwim (see docs/decisions.md D4); isolation via ns path + pod label
+  # selector uses sandbox name hash, not app= (openshell never sets that as a pod label)
+  spiffeIDTemplate: "spiffe://agent-pack.internal/ns/{{ .PodMeta.Namespace }}/sandbox/{{ index .PodMeta.Labels \"agents.x-k8s.io/sandbox-name-hash\" }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: spear-agents
+  podSelector:
+    matchExpressions:
+      # coordinator only: outbound spiffe to retrieval a2a (see docs/decisions.md D17)
+      - key: agents.x-k8s.io/sandbox-name-hash
+        operator: In
+        values:
+          # hash of sandbox name spear-coordinator
+          - abf32a96
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .PodMeta.Namespace }}"
+    - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"
+    - "k8s:pod-label:agents.x-k8s.io/sandbox-name-hash:{{ index .PodMeta.Labels \"agents.x-k8s.io/sandbox-name-hash\" }}"

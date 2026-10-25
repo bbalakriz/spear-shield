@@ -1,0 +1,138 @@
+# ogxserver: apply after ogx-* secrets exist (scripts/05-install-inference.sh)
+# this operator build ignores spec.providers/baseConfig/overrideConfig; only spec.workload.overrides.env reaches the pod
+# providers via baked config slots: maas glm, litemaas chat, TEI embed in this namespace (768d, 8192 ctx). pgvector in spear-data
+apiVersion: ogx.io/v1beta1
+kind: OGXServer
+metadata:
+  name: spear-ogx
+  namespace: spear-inference
+spec:
+  # distribution.name rh replaces deprecated rh-dev on this operator build
+  distribution:
+    name: rh
+  # network.policy replaces operator defaults (list every needed ingress rule)
+  network:
+    policy:
+      enabled: true
+      ingress:
+        - from:
+            - podSelector: {}
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: redhat-ods-applications
+          ports:
+            - protocol: TCP
+              port: 8321
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  network.openshift.io/policy-group: monitoring
+          ports:
+            - protocol: TCP
+              port: 9464
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-agents
+          ports:
+            - protocol: TCP
+              port: 8321
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-data
+          ports:
+            - protocol: TCP
+              port: 8321
+        # spear-pipelines corpus_prepare calls ogx directly
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-pipelines
+          ports:
+            - protocol: TCP
+              port: 8321
+        # spear-guardrails nemoguardrails generation calls ogx
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-guardrails
+          ports:
+            - protocol: TCP
+              port: 8321
+        # spear-eval jobs call raw ogx (internal judge, not user traffic)
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: spear-eval
+          ports:
+            - protocol: TCP
+              port: 8321
+  workload:
+    overrides:
+      env:
+        # ogx metadata db on spear-data pgvector (scripts/05-install-inference.sh)
+        - name: POSTGRES_HOST
+          value: pgvector.spear-data.svc.cluster.local
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          value: ogx_metadata
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-creds
+              key: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-creds
+              key: password
+        # ragdb pgvector store; ENABLE_PGVECTOR activates pgvector provider slot
+        - name: ENABLE_PGVECTOR
+          value: "true"
+        - name: PGVECTOR_HOST
+          value: pgvector.spear-data.svc.cluster.local
+        - name: PGVECTOR_PORT
+          value: "5432"
+        - name: PGVECTOR_DB
+          value: ragdb
+        - name: PGVECTOR_USER
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-creds
+              key: user
+        - name: PGVECTOR_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-creds
+              key: password
+        # remote::openai slot: maas glm via body based /v1 routing (not per model path)
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ogx-glm-key
+              key: apiKey
+        - name: OPENAI_BASE_URL
+          value: https://maas.apps.ocp.cloud.rhai-tmm.dev/v1
+        # remote::vllm slot, the litemaas gateway, chat model
+        - name: VLLM_URL
+          value: https://litemaas.rhoai.rh-aiservices-bu.com/v1
+        - name: VLLM_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ogx-litemaas-key
+              key: apiKey
+        # remote::vllm embedding slot pointed at local TEI service
+        - name: VLLM_EMBEDDING_URL
+          value: http://spear-embed-server.spear-inference.svc.cluster.local/v1
+        # tei auth disabled; non empty placeholder only
+        - name: VLLM_EMBEDDING_API_TOKEN
+          value: not-required-auth-disabled-on-tei
+        - name: EMBEDDING_MODEL
+          value: nomic-embed-text-v1.5
+        - name: EMBEDDING_PROVIDER_MODEL_ID
+          value: nomic-embed-text-v1.5
+        # straight against the tei server, len(data[0].embedding) == 768
+        - name: EMBEDDING_DIMENSION
+          value: "768"

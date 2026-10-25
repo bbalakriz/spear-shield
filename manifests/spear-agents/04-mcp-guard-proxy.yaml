@@ -1,0 +1,84 @@
+# shared envoy guard proxy for all mcp servers behind spear-mcp-gateway (see mcp-servers/spear-mcp-guard-proxy/server.py)
+# backend from x-mcp-servername (or gateway-server-id on discovery); one deployment for every server
+# openproject route in spear-worktracker needs ReferenceGrant for cross namespace backendRef
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-mcp-guard-proxy
+  namespace: spear-agents
+  labels:
+    app: spear-mcp-guard-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-mcp-guard-proxy
+  template:
+    metadata:
+      labels:
+        app: spear-mcp-guard-proxy
+    spec:
+      containers:
+        - name: guard-proxy
+          image: image-registry.openshift-image-registry.svc:5000/openshift/python:3.12-ubi9
+          command: ["python3", "/mcp/server.py"]
+          ports:
+            - containerPort: 8000
+          env:
+            # upstream from x-mcp-servername or gateway-server-id; do not set UPSTREAM_URL
+            - name: GUARDRAILS_ROUTE
+              value: GUARDRAILS_ROUTE_PLACEHOLDER
+            - name: GUARDRAILS_CONFIG_ID
+              value: work-tracker-config
+          volumeMounts:
+            - name: code
+              mountPath: /mcp
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: code
+          configMap:
+            name: spear-mcp-guard-proxy-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-mcp-guard-proxy
+  namespace: spear-agents
+  labels:
+    app: spear-mcp-guard-proxy
+spec:
+  selector:
+    app: spear-mcp-guard-proxy
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# spear-openproject-mcp's HTTPRoute lives in spear-worktracker while this
+# proxy's Service stays in spear-agents; gateway api's cross namespace
+# backendRef rule requires this ReferenceGrant naming both sides
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: spear-worktracker-to-guard-proxy
+  namespace: spear-agents
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: spear-worktracker
+  to:
+    - group: ""
+      kind: Service
+      name: spear-mcp-guard-proxy

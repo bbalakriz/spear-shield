@@ -1,0 +1,75 @@
+# openshell network policy for coordinator sandbox egress
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /opt
+    - /etc
+    - /proc
+    - /dev/urandom
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: best_effort
+network_policies:
+  cluster_auth:
+    name: cluster-auth
+    endpoints:
+      # keycloak https for token_grant; rest on 443 does TLS to the apps route backend
+      - host: SSO_HOST_PLACEHOLDER
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        # no allowed_ips: apps route IP is outside cluster/service CIDRs
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_guardrails:
+    name: cluster-guardrails
+    endpoints:
+      # guardrails route (not raw ogx); external apps hostname, no allowed_ips
+      - host: GUARDRAILS_HOST_PLACEHOLDER
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_retrieval:
+    name: cluster-retrieval
+    endpoints:
+      # retrieval a2a via spear-agents gateway (see 07-a2a-gateway.yaml)
+      - host: spear-retrieval-a2a-gateway.spear-agents.svc.cluster.local
+        port: 80
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - CLUSTER_NETWORK_CIDR_PLACEHOLDER
+          - SERVICE_NETWORK_CIDR_PLACEHOLDER
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*
+  cluster_mlflow:
+    name: cluster-mlflow
+    endpoints:
+      # mlflow route hostname; no allowed_ips (apps route is outside cluster/service CIDRs)
+      - host: MLFLOW_HOST_PLACEHOLDER
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - path: /usr/bin/python3*
+      - path: /usr/local/bin/python3*
+      - path: /opt/app-root/bin/python3*

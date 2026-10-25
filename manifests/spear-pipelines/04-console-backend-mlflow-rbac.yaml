@@ -1,0 +1,24 @@
+# console backend mlflow read RBAC in workspace namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-console-reader
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-console-reader
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-console-reader
+  apiGroup: rbac.authorization.k8s.io

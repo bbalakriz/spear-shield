@@ -1,0 +1,60 @@
+# imagestreams for agent container builds
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-coordinator-agent
+  namespace: spear-agents
+  labels:
+    app: spear-coordinator-agent
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-coordinator-agent
+  namespace: spear-agents
+  labels:
+    app: spear-coordinator-agent
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-coordinator-agent
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-coordinator-agent:latest
+  triggers: []
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-retrieval-agent
+  namespace: spear-agents
+  labels:
+    app: spear-retrieval-agent
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-retrieval-agent
+  namespace: spear-agents
+  labels:
+    app: spear-retrieval-agent
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-retrieval-agent
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-retrieval-agent:latest
+  triggers: []

@@ -1,0 +1,68 @@
+# rag query relay between agents and pgvector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-shield-rag-query-relay
+  namespace: spear-data
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-shield-rag-query-relay
+  template:
+    metadata:
+      labels:
+        app: spear-shield-rag-query-relay
+    spec:
+      containers:
+        - name: relay
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/spear-retrieval-agent:latest
+          command: ["python3", "/sandbox/rag_query_server.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: OGX_BASE_URL
+              value: http://spear-ogx-service.spear-inference.svc.cluster.local:8321
+            - name: PGVECTOR_HOST
+              value: pgvector.spear-data.svc.cluster.local
+            - name: PGVECTOR_DB_PORT
+              value: "5432"
+            - name: PGVECTOR_DB
+              value: ragdb
+            # rag_reader, not raguser: this relay's only job is reading
+            # rag_chunks through the row level security policy on it, see
+            # scripts/03-install-data.sh's own ensure_rag_reader_role
+            # raguser is a postgres superuser with bypassrls set, it
+            # would silently ignore that policy entirely, a role this
+            # relay connects as has to be one the policy can actually
+            # constrain
+            - name: PGVECTOR_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rag-reader-creds
+                  key: user
+            - name: PGVECTOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-reader-creds
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-shield-rag-query-relay
+  namespace: spear-data
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+spec:
+  selector:
+    app: spear-shield-rag-query-relay
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

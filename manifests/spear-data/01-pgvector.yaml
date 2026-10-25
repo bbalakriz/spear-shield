@@ -1,0 +1,84 @@
+# pgvector database for rag chunks and ogx metadata
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgvector-data
+  namespace: spear-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgvector
+  namespace: spear-data
+  labels:
+    app: pgvector
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pgvector
+  template:
+    metadata:
+      labels:
+        app: pgvector
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/pgvector/pgvector:pg16
+          env:
+            - name: POSTGRES_DB
+              value: ragdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-creds
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-creds
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "ragdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "ragdb"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pgvector-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgvector
+  namespace: spear-data
+  labels:
+    app: pgvector
+spec:
+  selector:
+    app: pgvector
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

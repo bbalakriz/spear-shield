@@ -1,0 +1,33 @@
+# spear-confidential-data-provider, a custom evalhub provider scoring the
+# coordinator agent's generated answers for confidential data leaks on
+# model output. runs as a plain evalhub job pod (FrameworkAdapter's
+# documented adapter + sidecar lifecycle), not an openshell sandbox, so
+# none of the iproute/nftables setup the agent Containerfiles need.
+#
+# lives in evalhub/, not agents/: this is an evalhub provider, never runs
+# inside the openshell sandbox runtime the real agents share
+#
+# eval-hub-sdk resolves from packages.redhat.com, no extra credentials needed
+#
+# build in cluster:
+#   oc start-build spear-confidential-data-provider --from-dir=evalhub --wait -n spear-eval
+
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER 0
+
+COPY spear-confidential-data-provider/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+ && python3 -m spacy download en_core_web_lg
+
+RUN install -d -o 1001 -g 0 -m 775 /app
+WORKDIR /app
+
+USER 1001
+
+COPY --chown=1001:0 spear-confidential-data-provider/adapter.py /app/adapter.py
+COPY --chown=1001:0 spear-confidential-data-provider/main.py /app/main.py
+
+ENV PYTHONPATH=/app
+
+CMD ["python3", "/app/main.py"]

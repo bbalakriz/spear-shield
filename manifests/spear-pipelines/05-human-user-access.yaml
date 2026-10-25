@@ -1,0 +1,14 @@
+# human user mlflow and kfp access via console forwarded token
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-console-user-access
+  namespace: spear-pipelines
+subjects:
+  - kind: User
+    name: balakrishnan.b
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io

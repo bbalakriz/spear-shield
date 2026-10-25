@@ -1,0 +1,14 @@
+# SCC for openproject in spear-worktracker
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-openproject-anyuid
+  namespace: spear-worktracker
+subjects:
+  - kind: ServiceAccount
+    name: spear-openproject
+    namespace: spear-worktracker
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,50 @@
+# guardrails route callers: unscoped get services (resourceName scoped rules pass SAR but still 403)
+# openproject-mcp and coordinator bindings; coordinator SA/secret stay in spear-agents
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-guardrails-caller-spear-openproject-mcp
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-guardrails-caller-spear-openproject-mcp
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: spear-agents
+roleRef:
+  kind: Role
+  name: spear-guardrails-caller-spear-openproject-mcp
+  apiGroup: rbac.authorization.k8s.io
+---
+# coordinator guardrails Role/RoleBinding (SA in spear-agents)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-guardrails-caller-spear-coordinator
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-guardrails-caller-spear-coordinator
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: spear-coordinator-guardrails-caller
+    namespace: spear-agents
+roleRef:
+  kind: Role
+  name: spear-guardrails-caller-spear-coordinator
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,30 @@
+# evalhub cycle runner image build
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+  labels:
+    app: evalhub-cycle-runner
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: evalhub-cycle-runner
+  namespace: spear-eval
+  labels:
+    app: evalhub-cycle-runner
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: evalhub/Containerfile.evalhub-cycle-runner
+  output:
+    to:
+      kind: ImageStreamTag
+      name: evalhub-cycle-runner:latest
+  triggers: []

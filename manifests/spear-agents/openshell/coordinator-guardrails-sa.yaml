@@ -1,0 +1,16 @@
+# coordinator token for guardrails (static secret; sandboxes disable automountServiceAccountToken)
+# roleBinding half is manifests/spear-guardrails/07-caller-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-coordinator-guardrails-caller
+  namespace: spear-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-guardrails-caller-token
+  namespace: spear-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-coordinator-guardrails-caller
+type: kubernetes.io/service-account-token

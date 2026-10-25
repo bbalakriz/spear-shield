@@ -1,0 +1,110 @@
+# rhoai dsc/dsci and dashboard config prerequisites
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redhat-ods-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+spec:
+  upgradeStrategy: Default
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable-3.x
+  name: rhods-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Manual
+  startingCSV: rhods-operator.3.5.1
+---
+apiVersion: dscinitialization.opendatahub.io/v2
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Managed
+    namespace: redhat-ods-monitoring
+  trustedCABundle:
+    managementState: Managed
+    customCABundle: ""
+---
+apiVersion: datasciencecluster.opendatahub.io/v2
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    # this project's own reason for touching the dsc at all: mcp servers
+    # (manifests/10-agent-pack/01-mcp-calculator.yaml) need the mcp
+    # lifecycle operator, and gen ai studio (ogx) is what makes a deployed
+    # mcp server consumable in a playground once registered there
+    mcplifecycleoperator:
+      managementState: Managed
+    ogx:
+      managementState: Managed
+    workbenches:
+      managementState: Managed
+      workbenchNamespace: rhods-notebooks
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries
+    mlflowoperator:
+      managementState: Managed
+    feastoperator:
+      managementState: Managed
+    trustyai:
+      managementState: Managed
+    aipipelines:
+      managementState: Managed
+      argoWorkflowsControllers:
+        managementState: Managed
+    kserve:
+      managementState: Managed
+      rawDeploymentServiceConfig: Headless
+---
+apiVersion: opendatahub.io/v1alpha
+kind: OdhDashboardConfig
+metadata:
+  name: odh-dashboard-config
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  dashboardConfig:
+    # the two flags this project actually depends on: without agentsCatalog the
+    # dashboard has nowhere to list the coordinator/specialist agents at
+    # all, without mcpCatalog and mcpRegistry it has nowhere to show
+    # calculator-mcp's deployment status or let you register it into gen ai
+    # studio. genAiStudio is the playground these get registered into
+    agentsCatalog: true
+    agentConfigManagement: true
+    agentOps: true
+    mcpCatalog: true
+    mcpRegistry: true
+    genAiStudio: true
+    genAiTracing: true
+    disableLMEval: false
+  notebookController:
+    enabled: true
+    notebookNamespace: rhods-notebooks
+    pvcSize: 20Gi

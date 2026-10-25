@@ -1,0 +1,126 @@
+# job to build and deploy agent sandboxes via openshell CLI
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: deploy-spear-sandboxed-agents
+  namespace: spear-agents
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: openshell-configs
+          configMap:
+            name: spear-shield-openshell-agent-configs
+      containers:
+        - name: deploy
+          image: image-registry.openshift-image-registry.svc:5000/spear-agents/openshell-cli:latest
+          env:
+            - name: GATEWAY_ENDPOINT
+              value: http://openshell.openshell.svc.cluster.local:8080
+            - name: AGENT_RUNTIME_CLASS
+              value: "AGENT_RUNTIME_CLASS_PLACEHOLDER"
+            - name: MCP_PUBLIC_HOST
+              value: "MCP_PUBLIC_HOST_PLACEHOLDER"
+            - name: GUARDRAILS_ROUTE
+              value: "GUARDRAILS_ROUTE_PLACEHOLDER"
+            - name: MLFLOW_URL
+              value: "MLFLOW_URL_PLACEHOLDER"
+            - name: OGX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: spear-coordinator-guardrails-caller-token
+                  key: token
+            # one token per sandbox, real in process mlflow tracing
+            # yaml for
+            # where these secrets come from
+            - name: COORDINATOR_MLFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: spear-coordinator-mlflow-caller-token
+                  key: token
+            - name: RETRIEVAL_MLFLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: spear-retrieval-mlflow-caller-token
+                  key: token
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              die() { echo "$1" > /dev/termination-log; exit 1; }
+              osh() { openshell --gateway-endpoint "${GATEWAY_ENDPOINT}" "$@"; }
+              osh status || die "could not reach the shared openshell gateway"
+
+              RUNTIME_FLAG=""
+              if [ -n "${AGENT_RUNTIME_CLASS}" ]; then
+                RUNTIME_FLAG="--driver-config-json {\"kubernetes\":{\"pod\":{\"runtime_class_name\":\"${AGENT_RUNTIME_CLASS}\"}}}"
+              fi
+
+              # sandboxes first: a provider attached to a sandbox refuses
+              # to delete, a dead sandbox still counts as attached even
+              # once its own pod is long gone
+              # from a cluster restart that killed both sandbox pods
+              # outright
+              for name in spear-retrieval spear-coordinator; do
+                if osh sandbox list | awk '{print $1}' | grep -qx "${name}"; then
+                  osh sandbox delete "${name}" || true
+                fi
+              done
+
+              osh settings set --global --key providers_v2_enabled --value true --yes \
+                || die "failed to enable providers_v2_enabled"
+              if osh provider list 2>/dev/null | awk '{print $1}' | grep -qx coordinator-a2a-token-grant; then
+                osh provider delete coordinator-a2a-token-grant || true
+              fi
+              osh provider profile delete coordinator-a2a-token-grant 2>/dev/null || true
+              osh provider profile import -f /openshell-configs/coordinator-a2a-token-grant.yaml \
+                || die "provider profile import failed"
+              osh provider create \
+                --name coordinator-a2a-token-grant \
+                --type coordinator-a2a-token-grant \
+                --runtime-credentials \
+                || die "provider create failed"
+
+              osh sandbox create \
+                --name spear-retrieval \
+                --label app=spear-retrieval-agent \
+                --policy /openshell-configs/retrieval-policy.yaml \
+                --from image-registry.openshift-image-registry.svc:5000/spear-agents/spear-retrieval-agent:latest \
+                ${RUNTIME_FLAG} \
+                --detach \
+                --no-auto-providers \
+                --env AGENT_NAME=spear-retrieval-agent \
+                --env MCP_GATEWAY_HOST_HEADER="${MCP_PUBLIC_HOST}" \
+                --env MLFLOW_URL="${MLFLOW_URL}" \
+                --env MLFLOW_TRACKING_TOKEN="${RETRIEVAL_MLFLOW_TOKEN}" \
+                -- python3 /sandbox/main.py \
+                || die "spear-retrieval sandbox create failed"
+              sleep 20
+              osh service expose spear-retrieval 8080 a2a || die "spear-retrieval service expose failed"
+
+              osh sandbox create \
+                --name spear-coordinator \
+                --label app=spear-coordinator-agent \
+                --policy /openshell-configs/coordinator-policy.yaml \
+                --provider coordinator-a2a-token-grant \
+                --from image-registry.openshift-image-registry.svc:5000/spear-agents/spear-coordinator-agent:latest \
+                --detach \
+                --no-auto-providers \
+                --no-credential-warnings \
+                --env AGENT_NAME=spear-coordinator-agent \
+                --env OGX_BASE_URL="${GUARDRAILS_ROUTE}" \
+                --env OGX_API_KEY="${OGX_API_KEY}" \
+                --env MLFLOW_URL="${MLFLOW_URL}" \
+                --env MLFLOW_TRACKING_TOKEN="${COORDINATOR_MLFLOW_TOKEN}" \
+                -- python3 /sandbox/main.py \
+                || die "spear-coordinator sandbox create failed"
+              sleep 20
+              osh service expose spear-coordinator 8080 coordinator-http || die "spear-coordinator service expose failed"
+
+              osh sandbox list
+          volumeMounts:
+            - name: openshell-configs
+              mountPath: /openshell-configs
+              readOnly: true

@@ -1,0 +1,35 @@
+# single cluster MLflow instance named mlflow; workloads land in redhat-ods-applications. see docs/decisions.md D8
+# workspace via spear.io/mlflow-workspace on spear-pipelines; see docs/decisions.md D9
+# serveArtifacts and s3 artifactsDestination required for evalhub artifact uploads
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  name: mlflow
+  namespace: redhat-ods-applications
+spec:
+  # required for evalhub artifact uploads (503 without it)
+  serveArtifacts: true
+  # pin artifact writes to s3; operator default is ephemeral local path
+  artifactsDestination: s3://dsp-pipeline-artifacts/mlflow
+  workspaceLabelSelector:
+    matchLabels:
+      spear.io/mlflow-workspace: "true"
+  backendStoreUriFrom:
+    name: mlflow-backend-conn
+    key: uri
+  defaultArtifactRoot: s3://dsp-pipeline-artifacts/mlflow
+  env:
+    - name: MLFLOW_S3_ENDPOINT_URL
+      value: http://minio.minio.svc.cluster.local:9000
+    - name: AWS_DEFAULT_REGION
+      value: us-east-1
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: mlflow-s3-creds
+          key: accesskey
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: mlflow-s3-creds
+          key: secretkey

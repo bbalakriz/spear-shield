@@ -1,0 +1,30 @@
+# sA for in process mlflow tracing from agent sandboxes
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-coordinator-mlflow-caller
+  namespace: spear-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-coordinator-mlflow-caller-token
+  namespace: spear-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-coordinator-mlflow-caller
+type: kubernetes.io/service-account-token
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-retrieval-mlflow-caller
+  namespace: spear-agents
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spear-retrieval-mlflow-caller-token
+  namespace: spear-agents
+  annotations:
+    kubernetes.io/service-account.name: spear-retrieval-mlflow-caller
+type: kubernetes.io/service-account-token

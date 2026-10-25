@@ -1,0 +1,32 @@
+# ztwim operator for SPIFFE/SPIRE integration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zero-trust-workload-identity-manager
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: zero-trust-workload-identity-manager
+  namespace: zero-trust-workload-identity-manager
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-zero-trust-workload-identity-manager
+  namespace: zero-trust-workload-identity-manager
+  labels:
+    app.kubernetes.io/part-of: rhoai-agent-pack
+spec:
+  channel: stable-v1
+  name: openshift-zero-trust-workload-identity-manager
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  # manual: every operator in this project pins its currently succeeded csv
+  # and only moves forward when scripts/00-install-platform.sh explicitly
+  # approves the next install plan, no operator upgrades itself unattended
+  installPlanApproval: Manual
+  startingCSV: zero-trust-workload-identity-manager.v1.1.1

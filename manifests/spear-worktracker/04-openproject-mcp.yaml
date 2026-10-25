@@ -1,0 +1,137 @@
+# openproject mcp server and route in spear-worktracker
+apiVersion: mcp.x-k8s.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: spear-openproject-mcp
+  namespace: spear-worktracker
+  labels:
+    app: spear-openproject-mcp
+spec:
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: image-registry.openshift-image-registry.svc:5000/openshift/python:3.12-ubi9
+  mcp:
+    stateless: true
+  extraLabels:
+    app: spear-openproject-mcp
+  config:
+    port: 8000
+    path: /mcp
+    arguments:
+      - python3
+      - /mcp/server.py
+    env:
+      - name: MCP_BACKEND_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: spear-openproject-mcp-backend-secret
+            key: token
+      - name: OPENPROJECT_INTERNAL_URL
+        value: http://spear-openproject.spear-worktracker.svc.cluster.local:8080
+      - name: OPENPROJECT_HOST_HEADER
+        value: OPENPROJECT_HOST_PLACEHOLDER
+      - name: OPENPROJECT_PROJECT_IDENTIFIER
+        value: data-governance
+      - name: OPENPROJECT_TOKENS_DIR
+        value: /var/run/secrets/openproject-tokens
+    storage:
+      - path: /mcp
+        permissions: ReadOnly
+        source:
+          type: ConfigMap
+          configMap:
+            name: spear-openproject-mcp-code
+      - path: /var/run/secrets/openproject-tokens
+        permissions: ReadOnly
+        source:
+          type: Secret
+          secret:
+            secretName: spear-openproject-api-tokens
+  runtime:
+    replicas: 1
+    health:
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 5
+        periodSeconds: 10
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spear-openproject-mcp
+  namespace: spear-worktracker
+  labels:
+    mcp-server: "true"
+spec:
+  parentRefs:
+    # cross namespace now, see this file's own header comment, requires
+    # spear-mcp-gateway's allowedRoutes.namespaces.from: All
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: spear-mcp-gateway
+      namespace: spear-agents
+  hostnames:
+    - spear-openproject-mcp.mcp.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      # same direct-bypass close as calculator-mcp's own httproute
+      # section 4: this header only reaches the backend for a real
+      # client's tools/call, hairpinned by envoy's ext_proc, never for
+      # the broker's own separate admin connection
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Spear-Shield-Backend-Secret
+                value: MCP_BACKEND_SECRET_PLACEHOLDER
+      backendRefs:
+        # points at the guard proxy, not this server directly, see
+        # manifests/spear-agents/08-mcp-guard-proxy.yaml for why
+        # this hop exists. cross namespace now, explicit namespace
+        # field plus a ReferenceGrant in spear-agents required
+        # see this file's own header comment
+        - name: spear-mcp-guard-proxy
+          namespace: spear-agents
+          port: 8000
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: spear-openproject-mcp
+  namespace: spear-worktracker
+spec:
+  prefix: openproject_
+  hint: real work packages in the self hosted openproject data governance project
+  # forward caller headers on tools/list (gateway owns per persona rbac)
+  userSpecificList: Enabled
+  credentialRef:
+    name: spear-openproject-mcp-backend-secret
+    key: token
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: spear-openproject-mcp
+    namespace: spear-worktracker
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPVirtualServer
+metadata:
+  name: spear-openproject-tools
+  namespace: spear-worktracker
+spec:
+  description: real openproject work package tools, gated by per tool rbac
+  tools:
+    - openproject_search_work_packages
+    - openproject_update_work_package

@@ -1,0 +1,100 @@
+# RBAC so console backend can exec into agent sandboxes for pathway demos
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: owner-console-backend-spiffeid-reader
+rules:
+  - apiGroups: [spire.spiffe.io]
+    resources: [clusterspiffeids]
+    resourceNames: [spear-agents-sandboxes]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: owner-console-backend-spiffeid-reader
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: ClusterRole
+  name: owner-console-backend-spiffeid-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-authpolicy-reader
+  namespace: spear-agents
+rules:
+  - apiGroups: [kuadrant.io]
+    resources: [authpolicies]
+    resourceNames: [spear-retrieval-a2a-auth]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-authpolicy-reader
+  namespace: spear-agents
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-authpolicy-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-spire-agent-log-reader
+  namespace: zero-trust-workload-identity-manager
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-spire-agent-log-reader
+  namespace: zero-trust-workload-identity-manager
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-spire-agent-log-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-keycloak-admin-secret-reader
+  namespace: keycloak
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [keycloak-initial-admin]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-keycloak-admin-secret-reader
+  namespace: keycloak
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-keycloak-admin-secret-reader
+  apiGroup: rbac.authorization.k8s.io

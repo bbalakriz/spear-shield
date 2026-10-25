@@ -1,0 +1,37 @@
+# nemoguardrails config for internal docs ingestion pipeline
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: internal-docs-config
+  namespace: spear-guardrails
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+              - PERSON
+              - CREDIT_CARD
+              - US_SSN
+        regex_detection:
+          input:
+            patterns:
+              # prompt injection / instruction override signatures. this list
+              # is the one thing
+              # a security team review pass before go live
+              - "ignore\\s+(all\\s+)?previous\\s+instructions?"
+              - "system\\s+override"
+              - "you\\s+(now\\s+)?have\\s+elevated\\s+access"
+              - "disregard\\s+(all\\s+)?(prior|previous)\\s+(rules|restrictions|instructions)"
+              - "classify\\s+all\\s+data\\s+as\\s+public"
+              - "share\\s+(the\\s+)?full\\s+(customer\\s+)?database"
+              - "\\[\\s*system\\s*[:\\]]"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+  rails.co: |
+    # built in rails only, no custom colang flows for the baseline policy

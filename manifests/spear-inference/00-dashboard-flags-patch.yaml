@@ -1,0 +1,11 @@
+# odh dashboard feature flags patch for inference namespace
+spec:
+  dashboardConfig:
+    genAiStudio: true
+    autorag: true
+    agentsCatalog: true
+    agentConfigManagement: true
+    agentOps: true
+    mcpCatalog: true
+    mcpRegistry: true
+    genAiTracing: true    

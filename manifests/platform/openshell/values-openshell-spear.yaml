@@ -1,0 +1,30 @@
+# openshift openshell helm values for spear sandboxes
+server:
+  sandboxNamespace: spear-agents
+  disableTls: true
+  telemetryEnabled: false
+  auth:
+    allowUnauthenticatedUsers: true
+  providerTokenGrants:
+    spiffe:
+      enabled: true
+      workloadApiSocketPath: /spiffe-workload-api/spire-agent.sock
+
+supervisor:
+  topology: sidecar
+  sideloadMethod: init-container
+  sidecar:
+    processBinaryAwareNetworkPolicy: false
+
+podSecurityContext:
+  fsGroup: null
+
+securityContext:
+  runAsUser: null
+
+openshiftRoute:
+  enabled: false
+
+agentSandbox:
+  preflight:
+    enabled: true

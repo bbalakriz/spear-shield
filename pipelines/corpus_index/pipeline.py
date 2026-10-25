@@ -1,0 +1,466 @@
+"""spear-corpus-index-pipeline: decoupled second half of indexing, run
+after autorag picks a winning recipe rather than indexing with a fixed
+size placeholder chunker before any recipe is known.
+
+given a batch_id (to find that batch's logged ingestion report, for the
+document list and abac tags) and a winning pattern's settings
+(chunk_size, chunk_overlap, embedding_model_id, extracted by the caller
+from a completed autorag run's pattern.json, see
+console-backend/server.py's autorag_leaderboard()), this re chunks and
+re embeds every document the guardrails audit marked "success", deletes
+any existing rag_chunks rows for those doc_ids first (chunk boundaries
+move with chunk_size/overlap), and writes fresh rows tagged with the
+pattern_name and autorag_run_id that produced them.
+
+known limitation: autorag's winning pattern can name a chunking method
+other than fixed size window (recursive, for example), this pipeline
+only reproduces chunk_size/chunk_overlap/embedding_model, not ai4rag's
+own splitting algorithm. the splitting method itself stays the same
+fixed window slicer corpus_prepare_pipeline used, now parameterized.
+
+run `python3 pipeline.py` to compile spear-corpus-index-pipeline.yaml,
+or `python3 compile_and_run.py <batch_id> <autorag_run_id>` to also
+upload and trigger a run.
+"""
+from typing import NamedTuple
+
+from kfp import dsl
+from kfp import kubernetes
+
+BASE_IMAGE = "registry.access.redhat.com/ubi9/python-311:latest"
+
+MINIO_ENDPOINT_DEFAULT = "minio.minio.svc.cluster.local:9000"
+RAW_BUCKET_DEFAULT = "rag-documents"
+SANITIZED_PREFIX_DEFAULT = "sanitized/"
+OGX_BASE_URL_DEFAULT = "http://spear-ogx-service.spear-inference.svc.cluster.local:8321"
+MLFLOW_WORKSPACE_DEFAULT = "spear-pipelines"
+INGESTION_EXPERIMENT_NAME_DEFAULT = "spear-corpus-prepare"
+APPLY_EXPERIMENT_NAME_DEFAULT = "spear-corpus-index"
+
+
+@dsl.component(
+    base_image=BASE_IMAGE,
+    packages_to_install=["boto3==1.35.99", "psycopg2-binary==2.9.10", "requests==2.32.3"],
+)
+def apply_winning_pattern(
+    minio_endpoint: str,
+    bucket: str,
+    sanitized_prefix: str,
+    pgvector_host: str,
+    pgvector_port: str,
+    pgvector_db: str,
+    ogx_base_url: str,
+    mlflow_url: str,
+    mlflow_workspace: str,
+    ingestion_experiment_name: str,
+    batch_id: str,
+    pattern_name: str,
+    autorag_run_id: str,
+    embedding_model: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    apply_report: dsl.Output[dsl.Dataset],
+) -> NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)]):
+    """fetches batch_id's own already logged ingestion_report.json from
+    mlflow (the same artifact console-backend/server.py's
+    ingestion_report() reads), pulls the abac tags and the guardrails
+    verdict per document from it, then re indexes every document that
+    passed sanitization using the winning pattern's real chunk_size,
+    chunk_overlap and embedding_model_id.
+    """
+    import hashlib
+    import json
+    import os
+    import time
+
+    import boto3
+    import psycopg2
+    import requests
+
+    headers = {"X-MLflow-Workspace": mlflow_workspace, "Content-Type": "application/json"}
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    if os.path.exists(token_path):
+        with open(token_path) as f:
+            headers["Authorization"] = f"Bearer {f.read().strip()}"
+
+    search = requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/experiments/search",
+        headers=headers, json={"max_results": 100}, verify=False, timeout=30,
+    ).json()
+    exp = next((e for e in search.get("experiments", []) if e["name"] == ingestion_experiment_name), None)
+    if exp is None:
+        raise RuntimeError(f"no {ingestion_experiment_name!r} experiment found, has any batch ever been ingested?")
+
+    runs = requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/runs/search",
+        headers=headers,
+        json={
+            "experiment_ids": [exp["experiment_id"]],
+            "filter": f"tags.mlflow.runName = '{batch_id}'",
+            "max_results": 1,
+        },
+        verify=False, timeout=30,
+    ).json().get("runs", [])
+    if not runs:
+        raise RuntimeError(f"no ingestion run found for batch_id {batch_id!r}, was it ever triggered?")
+    ingestion_run_id = runs[0]["info"]["run_id"]
+
+    report_resp = requests.get(
+        f"{mlflow_url}/get-artifact?path=ingestion_report.json&run_uuid={ingestion_run_id}",
+        headers=headers, verify=False, timeout=30,
+    )
+    report_resp.raise_for_status()
+    report = report_resp.json()
+
+    docs_by_id = {d["doc_id"]: d for d in report.get("valid_documents", [])}
+    sanitized_rows = [r for r in report.get("guardrails", {}).get("audit", []) if r["verdict"] == "success"]
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"http://{minio_endpoint}",
+        aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
+    )
+    conn = psycopg2.connect(
+        host=pgvector_host, port=pgvector_port, dbname=pgvector_db,
+        user=os.environ["PGVECTOR_USER"], password=os.environ["PGVECTOR_PASSWORD"],
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rag_chunks (
+            id BIGSERIAL PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            chunk_index INT NOT NULL,
+            content TEXT NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            source TEXT,
+            clearance_level TEXT,
+            dept TEXT,
+            team TEXT,
+            project_scope TEXT,
+            data_owner TEXT,
+            embedding vector(768),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (doc_id, chunk_index)
+        )
+        """
+    )
+    # provenance columns, added once, so every row always shows which
+    # pattern indexed it rather than silently overwriting that history
+    for column, coltype in (
+        ("pattern_name", "TEXT"), ("autorag_run_id", "TEXT"),
+        ("chunk_size", "INT"), ("chunk_overlap", "INT"),
+    ):
+        cur.execute(f"ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS {column} {coltype}")
+
+    # postgres RLS: second abac layer beside rag_query.py; rag_reader has no bypassrls
+    # tagged dollar quote; bare $$ is collapsed by kubelet arg expansion (see docs/decisions.md D15)
+    cur.execute(
+        """
+        DO $rls$
+        BEGIN
+            IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'rag_reader') THEN
+                GRANT SELECT ON rag_chunks TO rag_reader;
+            END IF;
+        END
+        $rls$;
+
+        ALTER TABLE rag_chunks ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE rag_chunks FORCE ROW LEVEL SECURITY;
+
+        DROP POLICY IF EXISTS rag_chunks_abac ON rag_chunks;
+        CREATE POLICY rag_chunks_abac ON rag_chunks
+            FOR SELECT
+            USING (
+                clearance_level = ANY(string_to_array(current_setting('app.allowed_levels', true), ','))
+                AND (
+                    dept = current_setting('app.dept', true)
+                    OR team = NULLIF(current_setting('app.team', true), '')
+                    OR project_scope = 'enterprise-wide'
+                )
+            )
+        """
+    )
+
+    def embed_chunks(texts: list[str]) -> list[list[float]]:
+        resp = requests.post(
+            f"{ogx_base_url}/v1/embeddings",
+            json={"model": embedding_model, "input": texts},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        return [row["embedding"] for row in sorted(data, key=lambda r: r["index"])]
+
+    def embed_chunks_with_retry(texts: list[str], attempts: int = 3) -> list[list[float]]:
+        # retry transient embed failures; null vectors are unsearchable
+        last_exc = None
+        for attempt in range(attempts):
+            try:
+                return embed_chunks(texts)
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < attempts - 1:
+                    time.sleep(2 ** attempt)
+        raise last_exc
+
+    total_chunks = 0
+    documents_indexed = 0
+    # per doc_id, not just a count, this is what lands in apply_report.json
+    embedding_failures = []
+    for row in sanitized_rows:
+        doc = docs_by_id.get(row["doc_id"])
+        if doc is None:
+            print(f"  {row['doc_id']}: no abac tags found in ingestion report, skipping")
+            continue
+        content = s3.get_object(
+            Bucket=bucket, Key=f"{sanitized_prefix}{row['filename']}"
+        )["Body"].read().decode("utf-8")
+
+        chunks = []
+        start = 0
+        while start < len(content):
+            chunks.append(content[start:start + chunk_size])
+            start += chunk_size - chunk_overlap
+
+        try:
+            embeddings = embed_chunks_with_retry(chunks)
+        except requests.RequestException as exc:
+            # embed before delete: a failed embed must never make a
+            # previously working doc worse off, skip it entirely
+            print(f"  {doc['doc_id']}: embedding failed after {3} attempts ({exc}), leaving existing rows untouched, skipping")
+            embedding_failures.append({"doc_id": doc["doc_id"], "error": str(exc)})
+            continue
+
+        # only now that embeddings are in hand: chunk boundaries move
+        # with chunk_size/overlap, so rows under a previous pattern are stale
+        cur.execute("DELETE FROM rag_chunks WHERE doc_id = %s", (doc["doc_id"],))
+
+        for idx, chunk in enumerate(chunks):
+            vector_literal = "[" + ",".join(repr(v) for v in embeddings[idx]) + "]"
+            cur.execute(
+                """
+                INSERT INTO rag_chunks
+                    (doc_id, chunk_index, content, content_sha256, source,
+                     clearance_level, dept, team, project_scope, data_owner,
+                     embedding, pattern_name, autorag_run_id, chunk_size, chunk_overlap)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s)
+                """,
+                (
+                    doc["doc_id"], idx, chunk, hashlib.sha256(chunk.encode("utf-8")).hexdigest(),
+                    doc.get("source"), doc.get("clearance_level"), doc.get("dept"),
+                    doc.get("team"), doc.get("project_scope"), doc.get("data_owner"), vector_literal,
+                    pattern_name, autorag_run_id, chunk_size, chunk_overlap,
+                ),
+            )
+        total_chunks += len(chunks)
+        documents_indexed += 1
+        print(f"  {doc['doc_id']}: {len(chunks)} chunks written, embedded with {embedding_model}")
+
+    report_out = {
+        "batch_id": batch_id,
+        "pattern_name": pattern_name,
+        "autorag_run_id": autorag_run_id,
+        "table": "rag_chunks",
+        "chunking_method": "fixed_size_window (winner's real chunk_size/overlap, not autorag's own splitting algorithm, see this file's module docstring)",
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "embedding_model": embedding_model,
+        # list of {doc_id, error}; empty means every sanitized doc is really searchable
+        "embedding_failures": embedding_failures,
+        "documents_indexed": documents_indexed,
+        "chunks_created": total_chunks,
+    }
+    with open(apply_report.path, "w") as f:
+        json.dump(report_out, f, indent=2)
+
+    cur.close()
+    conn.close()
+
+    outputs = NamedTuple("Outputs", [("chunks_created", int), ("documents_indexed", int), ("embedding_failures", int)])
+    return outputs(total_chunks, documents_indexed, len(embedding_failures))
+
+
+@dsl.component(base_image=BASE_IMAGE, packages_to_install=["boto3==1.35.99", "requests==2.32.3"])
+def log_apply_report(
+    mlflow_url: str,
+    mlflow_workspace: str,
+    apply_experiment_name: str,
+    batch_id: str,
+    pattern_name: str,
+    autorag_run_id: str,
+    minio_endpoint: str,
+    artifact_bucket: str,
+    chunks_created: int,
+    documents_indexed: int,
+    embedding_failures: int,
+    apply_report: dsl.Input[dsl.Dataset],
+) -> str:
+    """logs one mlflow run per apply, under its own spear-corpus-index
+    experiment rather than mixed into spear-corpus-prepare, since applying a
+    pattern is a separate real world action from ingesting a batch and
+    can happen more than once against the same batch as autorag keeps
+    finding better recipes.
+    """
+    import json
+    import os
+    import time
+
+    import boto3
+    import requests
+
+    with open(apply_report.path) as f:
+        report = json.load(f)
+
+    headers = {"X-MLflow-Workspace": mlflow_workspace, "Content-Type": "application/json"}
+    token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    if os.path.exists(token_path):
+        with open(token_path) as f:
+            headers["Authorization"] = f"Bearer {f.read().strip()}"
+
+    search = requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/experiments/search",
+        headers=headers, json={"max_results": 100}, verify=False, timeout=30,
+    ).json()
+    exp = next((e for e in search.get("experiments", []) if e["name"] == apply_experiment_name), None)
+    if exp is None:
+        exp = requests.post(
+            f"{mlflow_url}/api/2.0/mlflow/experiments/create",
+            headers=headers, json={"name": apply_experiment_name}, verify=False, timeout=30,
+        ).json()
+        experiment_id = exp["experiment_id"]
+    else:
+        experiment_id = exp["experiment_id"]
+
+    run_name = f"{batch_id}-{pattern_name}"
+    run = requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/runs/create",
+        headers=headers,
+        json={
+            "experiment_id": experiment_id, "start_time": int(time.time() * 1000),
+            "tags": [{"key": "mlflow.runName", "value": run_name}],
+        },
+        verify=False, timeout=30,
+    ).json()
+    run_id = run["run"]["info"]["run_id"]
+    artifact_uri = run["run"]["info"]["artifact_uri"]
+
+    metrics_ts = int(time.time() * 1000)
+    requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/runs/log-batch",
+        headers=headers,
+        json={
+            "run_id": run_id,
+            "params": [
+                {"key": "batch_id", "value": batch_id},
+                {"key": "pattern_name", "value": pattern_name},
+                {"key": "autorag_run_id", "value": autorag_run_id},
+            ],
+            "metrics": [
+                {"key": "chunks_created", "value": chunks_created, "timestamp": metrics_ts},
+                {"key": "documents_indexed", "value": documents_indexed, "timestamp": metrics_ts},
+                # a real mlflow metric, not just buried in the json artifact
+                {"key": "embedding_failures", "value": embedding_failures, "timestamp": metrics_ts},
+            ],
+        },
+        verify=False, timeout=30,
+    )
+
+    assert artifact_uri.startswith("s3://"), artifact_uri
+    _, path = artifact_uri[len("s3://"):].split("/", 1)
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"http://{minio_endpoint}",
+        aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
+    )
+    s3.put_object(
+        Bucket=artifact_bucket,
+        Key=f"{path}/apply_report.json",
+        Body=json.dumps(report, indent=2).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    requests.post(
+        f"{mlflow_url}/api/2.0/mlflow/runs/update",
+        headers=headers,
+        json={"run_id": run_id, "status": "FINISHED", "end_time": int(time.time() * 1000)},
+        verify=False, timeout=30,
+    )
+
+    print(f"logged mlflow run {run_id} in experiment {apply_experiment_name}")
+    return run_id
+
+
+def _use_minio_creds(task):
+    kubernetes.use_secret_as_env(
+        task, secret_name="minio-dsp-creds",
+        secret_key_to_env={"accesskey": "MINIO_ACCESS_KEY", "secretkey": "MINIO_SECRET_KEY"},
+    )
+
+
+def _use_pgvector_creds(task):
+    kubernetes.use_secret_as_env(
+        task, secret_name="pgvector-creds",
+        secret_key_to_env={"user": "PGVECTOR_USER", "password": "PGVECTOR_PASSWORD"},
+    )
+
+
+@dsl.pipeline(
+    name="spear-corpus-index-pipeline",
+    description="winning autorag pattern -> re chunk + re embed the sanitized batch -> pgvector -> mlflow report",
+)
+def corpus_index_pipeline(
+    mlflow_url: str,
+    batch_id: str,
+    pattern_name: str,
+    autorag_run_id: str,
+    embedding_model: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    minio_endpoint: str = MINIO_ENDPOINT_DEFAULT,
+    raw_bucket: str = RAW_BUCKET_DEFAULT,
+    sanitized_prefix: str = SANITIZED_PREFIX_DEFAULT,
+    pgvector_host: str = "pgvector.spear-data.svc.cluster.local",
+    pgvector_port: str = "5432",
+    pgvector_db: str = "ragdb",
+    ogx_base_url: str = OGX_BASE_URL_DEFAULT,
+    mlflow_workspace: str = MLFLOW_WORKSPACE_DEFAULT,
+    ingestion_experiment_name: str = INGESTION_EXPERIMENT_NAME_DEFAULT,
+    apply_experiment_name: str = APPLY_EXPERIMENT_NAME_DEFAULT,
+    artifact_bucket: str = "dsp-pipeline-artifacts",
+):
+    apply_task = apply_winning_pattern(
+        minio_endpoint=minio_endpoint, bucket=raw_bucket, sanitized_prefix=sanitized_prefix,
+        pgvector_host=pgvector_host, pgvector_port=pgvector_port, pgvector_db=pgvector_db,
+        ogx_base_url=ogx_base_url, mlflow_url=mlflow_url, mlflow_workspace=mlflow_workspace,
+        ingestion_experiment_name=ingestion_experiment_name, batch_id=batch_id,
+        pattern_name=pattern_name, autorag_run_id=autorag_run_id,
+        embedding_model=embedding_model, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+    )
+    _use_minio_creds(apply_task)
+    _use_pgvector_creds(apply_task)
+    apply_task.set_caching_options(False)
+
+    report_task = log_apply_report(
+        mlflow_url=mlflow_url, mlflow_workspace=mlflow_workspace,
+        apply_experiment_name=apply_experiment_name, batch_id=batch_id,
+        pattern_name=pattern_name, autorag_run_id=autorag_run_id,
+        minio_endpoint=minio_endpoint, artifact_bucket=artifact_bucket,
+        chunks_created=apply_task.outputs["chunks_created"],
+        documents_indexed=apply_task.outputs["documents_indexed"],
+        embedding_failures=apply_task.outputs["embedding_failures"],
+        apply_report=apply_task.outputs["apply_report"],
+    )
+    _use_minio_creds(report_task)
+    report_task.set_caching_options(False)
+
+
+if __name__ == "__main__":
+    from kfp import compiler
+
+    out = __file__.replace("pipeline.py", "spear-corpus-index-pipeline.yaml")
+    compiler.Compiler().compile(corpus_index_pipeline, out)
+    print(f"compiled {out}")

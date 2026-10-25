@@ -1,0 +1,75 @@
+# text embeddings inference (TEI) for nomic-embed-text-v1.5
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spear-embed-server
+  namespace: spear-inference
+  labels:
+    app: spear-embed-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spear-embed-server
+  template:
+    metadata:
+      labels:
+        app: spear-embed-server
+    spec:
+      containers:
+        - name: tei
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+          # pinned to the commit right before nomic-ai's "v5 Transformers"
+          # config regression, see bug 3 above
+          args: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--revision", "e5cf08aadaa33385f5990def41f7a23405aec398", "--port", "8080"]
+          env:
+            - name: HF_ENDPOINT
+              value: https://huggingface.co
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "48Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 30
+          # large embeds can block /health for tens of seconds; loose probe
+          # avoids false kills. failureThreshold also has to cover the first
+          # run model download from huggingface, not just slow embed calls
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        # see bug 2 above, emptyDir is writable by the pod's assigned
+        # fsGroup, the image's own /data is not
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spear-embed-server
+  namespace: spear-inference
+spec:
+  selector:
+    app: spear-embed-server
+  ports:
+    - port: 80
+      targetPort: 8080

@@ -1,0 +1,25 @@
+# console backend closed loop RBAC for guardrails feedback
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: owner-console-backend-closed-loop-patcher
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["coordinator-agent-config"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: owner-console-backend-closed-loop-patcher
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: spear-console-backend
+    namespace: spear-console
+roleRef:
+  kind: Role
+  name: owner-console-backend-closed-loop-patcher
+  apiGroup: rbac.authorization.k8s.io

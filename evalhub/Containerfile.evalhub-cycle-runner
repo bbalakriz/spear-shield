@@ -1,0 +1,40 @@
+# wraps scripts/11-submit-evalhub-jobs.sh so
+# manifests/spear-eval/07-cycle-runner-cronjob.yaml can run it on a
+# schedule instead of only by hand from a laptop.
+#
+# lives in evalhub/, not scripts/, that directory is pure orchestration
+# scripts, not build artifacts. the script and its lib/ helpers stay in
+# scripts/ since they are genuinely dual purpose, run by hand and baked
+# into this image, so the build context is the whole repo root:
+#
+#   oc start-build evalhub-cycle-runner --from-dir=. \
+#     --exclude='(^|/)(\.git|\.venv-kfp|\.venv|venv|node_modules|__pycache__|archive)(/|$)|\.(docx|pptx|rtf|excalidraw|pyc)$' \
+#     --wait -n spear-eval
+#
+# --exclude avoids a multi gb upload, oc start-build ignores .dockerignore
+#
+# openshift/cli base has oc, bash, python3, curl; jq from ubi repos
+#
+# no oc login needed, running in a pod picks up the mounted sa token and
+# in cluster server address automatically
+FROM image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+
+USER 0
+RUN microdnf install -y jq && microdnf clean all
+
+RUN install -d -o 1001 -g 0 -m 775 /app
+WORKDIR /app
+
+COPY --chown=1001:0 scripts/lib-common.sh /app/scripts/lib-common.sh
+COPY --chown=1001:0 scripts/11-submit-evalhub-jobs.sh /app/scripts/11-submit-evalhub-jobs.sh
+COPY --chown=1001:0 scripts/lib/export_ragas_dataset.py /app/scripts/lib/export_ragas_dataset.py
+COPY --chown=1001:0 scripts/lib/create_eval_cycle_run.py /app/scripts/lib/create_eval_cycle_run.py
+COPY --chown=1001:0 scripts/lib/log_eval_to_mlflow.py /app/scripts/lib/log_eval_to_mlflow.py
+RUN chmod +x /app/scripts/11-submit-evalhub-jobs.sh
+
+USER 1001
+# base image's default $HOME (/root) is not writable by a non root uid,
+# oc still wants somewhere to write its plugin cache
+ENV HOME=/app
+
+ENTRYPOINT ["/app/scripts/11-submit-evalhub-jobs.sh"]

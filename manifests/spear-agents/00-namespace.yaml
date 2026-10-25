@@ -1,0 +1,29 @@
+# spear-agents namespace (gateways, sandboxes, realm import). worktracker is spear-worktracker
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-agents
+  labels:
+    app.kubernetes.io/part-of: spear-agents
+    kubernetes.io/metadata.name: spear-agents
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spear-agents
+  namespace: spear-agents
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: spear-agents
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}

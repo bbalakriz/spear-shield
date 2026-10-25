@@ -1,0 +1,30 @@
+# evalhub CR in spear-eval; multi tenancy via x-tenant header
+apiVersion: trustyai.opendatahub.io/v1
+kind: EvalHub
+metadata:
+  name: evalhub
+  namespace: spear-eval
+spec:
+  replicas: 1
+  tenancy: multi
+  database:
+    type: postgresql
+    secret: evalhub-db-credentials
+  providers:
+    - ragas-v062
+    - ibm-clear-v060
+    # garak, the third real evaluation axis
+    # already shipped trustyai-service-operator-evalhub-provider-garak
+    # configmap, system type same as ragas/ibm-clear, no community override
+    # needed here, nothing in it hints at the v0.5.0 style bugs those two
+    # had. not registered on this cr until this point since nothing had
+    # submitted a job against it yet
+    - garak
+    # spear-confidential-data, the fourth axis, our own provider, not a
+    # red hat or community one, see 05-confidential-data-provider-config.yaml
+    - spear-confidential-data
+  env:
+    - name: MLFLOW_TRACKING_URI
+      value: "https://mlflow.redhat-ods-applications.svc:8443/mlflow"
+    - name: MLFLOW_WORKSPACE
+      value: "spear-pipelines"

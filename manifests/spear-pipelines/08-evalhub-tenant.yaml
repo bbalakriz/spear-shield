@@ -1,0 +1,71 @@
+# spear-pipelines as second evalhub tenant (ibm-clear reads mlflow in this workspace). see docs/decisions.md D10
+# empty evalhub.trustyai.opendatahub.io/tenant label value is intentional
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spear-pipelines
+  labels:
+    evalhub.trustyai.opendatahub.io/tenant: ""
+---
+# same spear-eval-caller SA granted here; switch x-tenant to pick tenant
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evalhub-evaluator
+  namespace: spear-pipelines
+rules:
+  - apiGroups: ["trustyai.opendatahub.io"]
+    resources: ["evaluations", "collections", "providers"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-eval-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: spear-eval-caller
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: evalhub-evaluator
+  apiGroup: rbac.authorization.k8s.io
+---
+# evalhub-service SA needs mlflow experiments in this workspace (forwards caller token to mlflow)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-pipelines-mlflow-evalhub-caller
+  namespace: spear-pipelines
+rules:
+  - apiGroups: [mlflow.kubeflow.org]
+    resources: [experiments]
+    verbs: [get, list, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-pipelines-mlflow-evalhub-caller
+  namespace: spear-pipelines
+subjects:
+  - kind: ServiceAccount
+    name: evalhub-service
+    namespace: spear-eval
+  - kind: ServiceAccount
+    name: spear-eval-caller
+    namespace: spear-eval
+roleRef:
+  kind: Role
+  name: spear-pipelines-mlflow-evalhub-caller
+  apiGroup: rbac.authorization.k8s.io
+---
+# dummy OPENAI_API_KEY: ibm-clear litellm client requires non empty key though ogx ignores it
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ogx-dummy-model-auth
+  namespace: spear-pipelines
+type: Opaque
+stringData:
+  api-key: dummy-not-required

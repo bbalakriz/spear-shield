@@ -1,0 +1,30 @@
+# image build for spear-confidential-data eval provider
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: spear-confidential-data-provider
+  namespace: spear-eval
+  labels:
+    app: spear-confidential-data-provider
+spec: {}
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: spear-confidential-data-provider
+  namespace: spear-eval
+  labels:
+    app: spear-confidential-data-provider
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile.spear-confidential-data-provider
+  output:
+    to:
+      kind: ImageStreamTag
+      name: spear-confidential-data-provider:latest
+  triggers: []

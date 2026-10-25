@@ -1,0 +1,25 @@
+# guardrails route RBAC for pipeline ingestion: kube-rbac-proxy ignores resourceName in config; use plain get services
+# subject is pipeline-runner in spear-pipelines; Role lives in spear-guardrails with the Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spear-guardrails-caller
+  namespace: spear-guardrails
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spear-guardrails-caller-pipeline-runner
+  namespace: spear-guardrails
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-spear-dspa
+    namespace: spear-pipelines
+roleRef:
+  kind: Role
+  name: spear-guardrails-caller
+  apiGroup: rbac.authorization.k8s.io
