@@ -21,10 +21,11 @@ time (dotted = not a runtime request path). All labels cite the file that implem
 The only user-facing door is the OpenShift console dynamic plugin. No client-supplied
 username anywhere: the console proxy injects the signed-in user's own OAuth token, and the
 backend resolves identity by a live apiserver self-lookup (`users/~`), never by trusting a
-client. Identity minting is then a Keycloak password grant against the spear-agents
-realm keyed on that verified username - the backend holds each persona's realm password on
-file (`01-chat-creds.yaml`), a demo-only shortcut (no sso<->spear-agents federation
-exists).
+client. Identity minting is then real token exchange against the spear-agents realm keyed
+on that verified username: spear-coordinator's own service account (its client secret
+only, no per persona credential anywhere) impersonates that user through Keycloak's admin
+API, then completes a standard auth code grant against itself to get a real token for them
+(`mint_spear_shield_token`, server.py).
 
 ```mermaid
 flowchart LR
@@ -46,13 +47,13 @@ flowchart LR
     BK["spear-console-backend"]
     AP["OpenShift apiserver<br/>(kubernetes.default.svc)"]
     KC[("Keycloak<br/>(sso + spear-agents<br/>realms, keycloak ns)")]
-    PC[("spear-shield-console-creds secret<br/>(spear-console ns): one persona<br/>realm password file per username")]
+    PC[("spear-coordinator-client-secret<br/>(spear-console ns): one client<br/>secret, no per persona credential")]
     CO["Coordinator a2a<br/>endpoint via gateway"]
 
     BK -->|"1. GET /apis/user.openshift.io/v1/users/~<br/>with forwarded console token<br/>(openshift_username, server.py)"| AP
     AP -->|"resolved username<br/>(never client-supplied)"| BK
-    BK -.->|"read that persona's realm password<br/>(persona_password, demo-only shortcut)"| PC
-    BK -->|"2. POST password grant<br/>grant_type=password, client_id=spear-coordinator<br/>+ its client secret<br/>(mint_spear_shield_token, server.py)"| KC
+    BK -.->|"read spear-coordinator's own<br/>client secret"| PC
+    BK -->|"2. client_credentials grant, then admin<br/>impersonation of that username, then a<br/>standard auth code grant against itself<br/>(mint_spear_shield_token, server.py)"| KC
     KC -->|"3. realm JWT,<br/>subject = real user"| BK
     BK -->|"4. same realm JWT sent twice:<br/>Authorization header (gateway validates)<br/>+ params.callerToken in body<br/>(header dies at relay hop)"| CO
 ```
@@ -238,7 +239,7 @@ input alone only matches if the figures appear in the user prompt.
 
 | Segment | Hops | Enforcement shown |
 |---|---|---|
-| 1 | console -> plugin -> backend -> apiserver -> keycloak | apiserver self-lookup identity, password grant (demo-only persona password on file) |
+| 1 | console -> plugin -> backend -> apiserver -> keycloak | apiserver self-lookup identity, admin impersonation plus auth code grant, no persona password anywhere |
 | 2 | gateway -> sandbox -> guardrails -> retrieval | dual-issuer auth, spiffe sub pinning, input rails, sandbox egress |
 | 3 | retrieval -> relay -> ogx/pgvector | ABAC (clearance + dept or team), RLS via rag_reader, trace export |
 | 4 | retrieval -> gateway -> guard proxy -> openproject | per-tool RBAC, request + response guardrails, assignee=self |

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# runs install scripts 01 through 09, then 90-verify; stops on first failure.
-# autorag apply pattern still needs a manual batch_id and winning pattern.
+# runs install scripts 01 through 10, then 90-verify; stops on first failure.
+# 11-submit-evalhub-jobs.sh and autorag apply pattern are manual one shot
+# steps, deliberately left out of this chain
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./lib-common.sh
@@ -17,6 +18,7 @@ SCRIPTS=(
   07-install-guardrails.sh
   08-install-console.sh
   09-install-worktracker-and-agents.sh
+  10-install-evalhub.sh
 )
 
 main() {

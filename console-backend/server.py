@@ -3,6 +3,7 @@
 # kfp calls (runs, autorag scores, triggers) use the signed in user's own
 # forwarded token, so rbac on spear-pipelines gates them, not this sa
 import base64
+import http.cookiejar
 import json
 import os
 import re
@@ -88,9 +89,14 @@ INGESTION_SOURCE_PREFIX = os.environ.get("INGESTION_SOURCE_PREFIX", "raw-intake/
 SPEAR_SHIELD_ISSUER_URL = os.environ.get("SPEAR_SHIELD_ISSUER_URL", "")
 SPEAR_COORDINATOR_A2A_URL = os.environ.get("SPEAR_COORDINATOR_A2A_URL", "")
 SPEAR_COORDINATOR_CLIENT_ID = os.environ.get("SPEAR_COORDINATOR_CLIENT_ID", "spear-coordinator")
-SPEAR_SHIELD_CREDS_DIR = os.environ.get("SPEAR_SHIELD_CREDS_DIR", "/secrets/spear-shield-console-creds")
 SPEAR_COORDINATOR_CLIENT_SECRET_PATH = os.environ.get(
     "SPEAR_COORDINATOR_CLIENT_SECRET_PATH", "/secrets/spear-coordinator-client-secret/client-secret"
+)
+# must match the redirectUris entry on the spear-coordinator client in
+# manifests/spear-agents/01-keycloak-realm.yaml, never actually dereferenced,
+# mint_spear_shield_token below only reads the "code" query param off the 302
+SPEAR_COORDINATOR_REDIRECT_URI = os.environ.get(
+    "SPEAR_COORDINATOR_REDIRECT_URI", "https://spear-coordinator.internal/callback"
 )
 
 # architecture status + security demo pages, exec via this pod's own sa
@@ -730,37 +736,93 @@ def openshift_username(user_token):
         return json.loads(resp.read())["metadata"]["name"]
 
 
-def persona_password(username):
-    # one file per username, same shape as spear-openproject-mcp's OPENPROJECT_TOKENS_DIR
-    path = os.path.join(SPEAR_SHIELD_CREDS_DIR, username)
-    if not os.path.isfile(path):
-        raise LookupError(f"no spear-agents realm password on file for {username!r}")
-    with open(path) as f:
-        return f.read().strip()
+class _NoRedirect(urllib.request.HTTPErrorProcessor):
+    # the auth code step 302s to a redirect_uri nobody can actually resolve,
+    # the code we need is in that Location header, following it would just 404
+    def http_response(self, request, response):
+        return response
+
+    https_response = http_response
 
 
-def mint_spear_shield_token(username, password):
-    data = urllib.parse.urlencode(
+def mint_spear_shield_token(username):
+    # replaces the old per persona password file: spear-coordinator holds the
+    # realm-management impersonation+view-users roles (see 01-keycloak-realm.yaml's
+    # clientScopeMappings), so it can mint a real token for any known username
+    # with nothing but its own client secret, no per user credential anywhere.
+    # flow: service account token -> look up the user's id -> admin
+    # impersonation sets a session cookie -> standard auth code grant reads
+    # that cookie and returns a code -> exchange the code for the real token
+    client_secret = open(SPEAR_COORDINATOR_CLIENT_SECRET_PATH).read().strip()
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar), urllib.request.HTTPSHandler(context=_no_verify_ctx())
+    )
+
+    sa_data = urllib.parse.urlencode(
+        {"grant_type": "client_credentials", "client_id": SPEAR_COORDINATOR_CLIENT_ID, "client_secret": client_secret}
+    ).encode()
+    sa_req = urllib.request.Request(
+        f"{SPEAR_SHIELD_ISSUER_URL}/protocol/openid-connect/token", data=sa_data, method="POST"
+    )
+    sa_token = json.loads(opener.open(sa_req, timeout=15).read())["access_token"]
+
+    admin_base = SPEAR_SHIELD_ISSUER_URL.replace("/realms/", "/admin/realms/", 1)
+    lookup_req = urllib.request.Request(
+        f"{admin_base}/users?username={urllib.parse.quote(username)}&exact=true",
+        headers={"Authorization": f"Bearer {sa_token}"},
+    )
+    users = json.loads(opener.open(lookup_req, timeout=15).read())
+    if not users:
+        raise LookupError(f"no user {username!r} in the spear-agents realm")
+    user_id = users[0]["id"]
+
+    impersonate_req = urllib.request.Request(
+        f"{admin_base}/users/{user_id}/impersonation",
+        data=b"{}",
+        headers={"Authorization": f"Bearer {sa_token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    opener.open(impersonate_req, timeout=15).read()
+
+    noredirect_opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar), urllib.request.HTTPSHandler(context=_no_verify_ctx()),
+        _NoRedirect,
+    )
+    auth_qs = urllib.parse.urlencode(
         {
-            "grant_type": "password",
             "client_id": SPEAR_COORDINATOR_CLIENT_ID,
-            "client_secret": open(SPEAR_COORDINATOR_CLIENT_SECRET_PATH).read().strip(),
-            "username": username,
-            "password": password,
+            "redirect_uri": SPEAR_COORDINATOR_REDIRECT_URI,
+            "response_type": "code",
             "scope": "openid",
         }
-    ).encode()
-    req = urllib.request.Request(
-        f"{SPEAR_SHIELD_ISSUER_URL}/protocol/openid-connect/token", data=data, method="POST"
     )
-    with urllib.request.urlopen(req, timeout=15, context=_no_verify_ctx()) as resp:
-        return json.loads(resp.read())["access_token"]
+    auth_resp = noredirect_opener.open(
+        urllib.request.Request(f"{SPEAR_SHIELD_ISSUER_URL}/protocol/openid-connect/auth?{auth_qs}"), timeout=15
+    )
+    location = auth_resp.headers.get("Location", "")
+    code = urllib.parse.parse_qs(urllib.parse.urlparse(location).query).get("code")
+    if not code:
+        raise RuntimeError(f"impersonated auth code redirect carried no code: {location}")
+
+    token_data = urllib.parse.urlencode(
+        {
+            "grant_type": "authorization_code",
+            "client_id": SPEAR_COORDINATOR_CLIENT_ID,
+            "client_secret": client_secret,
+            "code": code[0],
+            "redirect_uri": SPEAR_COORDINATOR_REDIRECT_URI,
+        }
+    ).encode()
+    token_req = urllib.request.Request(
+        f"{SPEAR_SHIELD_ISSUER_URL}/protocol/openid-connect/token", data=token_data, method="POST"
+    )
+    return json.loads(opener.open(token_req, timeout=15).read())["access_token"]
 
 
 def ask_spear_shield(message_text, user_token):
     username = openshift_username(user_token)
-    password = persona_password(username)
-    shield_token = mint_spear_shield_token(username, password)
+    shield_token = mint_spear_shield_token(username)
 
     rpc_body = {
         "jsonrpc": "2.0",
@@ -1433,7 +1495,7 @@ def demo_workload_identity():
 
     # the authpolicy still gates this outer hop; any persona works since
     # whoami-downstream checks no caller identity itself
-    gateway_token = mint_spear_shield_token("balakrishnan.b", persona_password("balakrishnan.b"))
+    gateway_token = mint_spear_shield_token("balakrishnan.b")
     downstream_body = {"jsonrpc": "2.0", "id": 1, "method": "whoami-downstream", "params": {}}
     downstream_req = urllib.request.Request(
         SPEAR_COORDINATOR_A2A_URL,
@@ -1476,8 +1538,8 @@ def demo_workload_identity():
 
 
 def demo_tool_scope_and_assignee():
-    bala_token = mint_spear_shield_token("balakrishnan.b", persona_password("balakrishnan.b"))
-    sid_token = mint_spear_shield_token("siddhartha.de", persona_password("siddhartha.de"))
+    bala_token = mint_spear_shield_token("balakrishnan.b")
+    sid_token = mint_spear_shield_token("siddhartha.de")
 
     # #38 assigned to balakrishnan.b, #39 to siddhartha.de
     step1 = _mcp_tool_text(mcp_tool_call("openproject_update_work_package", {"id": 38, "status": "in progress"}, bala_token))
@@ -1737,7 +1799,11 @@ class Handler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self._json(401, {"error": str(exc)})
         except LookupError as exc:
-            self._json(403, {"error": str(exc)})
+            # 404, not 403: this is a missing pipeline/experiment registration,
+            # not an rbac denial, the console sdk rewrites any 403 body into
+            # a generic "access denied due to cluster policy" and hides the
+            # real message below
+            self._json(404, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
             self._json(502, {"error": str(exc)})
 

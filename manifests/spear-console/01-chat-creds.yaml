@@ -1,5 +1,7 @@
-# demo username to spear-agents password map for console backend password grant (copied from realm import)
-# lives in spear-console so the backend pod can mount it (secrets are namespace local)
+# demo username to password map, no longer read by the console backend
+# (mint_spear_shield_token mints tokens via impersonation now, not password
+# grant), kept only so scripts/08-install-console.sh's ensure_sso_realm_demo_users
+# can seed matching logins into the separate sso realm for actual console sign in
 apiVersion: v1
 kind: Secret
 metadata:
@@ -12,7 +14,8 @@ stringData:
   balakrishnan.b: ConsoleTest#2026
   siddhartha.de: ConsoleTest#2026
 ---
-# spear-coordinator client secret for password grant (matches realm import)
+# spear-coordinator client secret, used by mint_spear_shield_token for both
+# its own service account token and the final auth code exchange (matches realm import)
 apiVersion: v1
 kind: Secret
 metadata:

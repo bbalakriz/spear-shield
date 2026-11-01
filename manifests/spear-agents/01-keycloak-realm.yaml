@@ -32,6 +32,15 @@ spec:
           roles:
             - tool:search_work_packages
             - tool:update_work_package
+      # lets spear-coordinator mint a token for any known username with just
+      # its own client secret, no per persona password, see mint_spear_shield_token
+      # in console-backend/server.py. view-users is required too, impersonation
+      # alone 403s the username lookup call (confirmed live against this realm)
+      realm-management:
+        - client: spear-coordinator
+          roles:
+            - impersonation
+            - view-users
     clients:
       - clientId: spear-coordinator
         name: spear-coordinator
@@ -40,8 +49,14 @@ spec:
         publicClient: false
         secret: f505e68dafacd8e440db4fef433366974f49079da21d8f28
         serviceAccountsEnabled: true
-        standardFlowEnabled: false
-        directAccessGrantsEnabled: true
+        # standard flow only used server side, by mint_spear_shield_token's own
+        # impersonation+auth code dance, never a real browser redirect
+        standardFlowEnabled: true
+        redirectUris:
+          - https://spear-coordinator.internal/callback
+        # password grant retired along with persona_password, nothing mints
+        # a token this way anymore
+        directAccessGrantsEnabled: false
         clientAuthenticatorType: client-secret
         # without these, clearance_level/dept/team never reach the token this
         # client mints, and section 3's abac filter has nothing to read

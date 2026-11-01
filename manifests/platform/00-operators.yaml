@@ -133,4 +133,4 @@ spec:
   source: redhat-operators
   sourceNamespace: openshift-marketplace
   installPlanApproval: Manual
-  startingCSV: rhbk-operator.v26.6.7-opr.1
+  startingCSV: rhbk-operator.v26.6.7-opr.3

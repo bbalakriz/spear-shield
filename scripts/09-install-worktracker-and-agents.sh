@@ -92,6 +92,72 @@ ensure_spiffe_federated_auth() {
     -d "{\"clientAuthenticationFlow\": \"${flow_alias}\"}"
 }
 
+# grants spear-coordinator the ability to mint a token for any known
+# username with no per persona password, replaces the old password grant;
+# see console-backend/server.py's mint_spear_shield_token and
+# 01-keycloak-realm.yaml's own clientScopeMappings comment for the full story
+ensure_spear_coordinator_token_exchange() {
+  local kc_host admin_user admin_pass admin_token kc coord_id sa_user_id rm_id existing_roles
+  kc_host="$(oc get route keycloak -n keycloak -o jsonpath='{.spec.host}')"
+  admin_user="$(oc get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' | base64 -d)"
+  admin_pass="$(oc get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' | base64 -d)"
+  admin_token="$(curl -sk -X POST "https://${kc_host}/realms/master/protocol/openid-connect/token" \
+    -d 'grant_type=password' -d 'client_id=admin-cli' \
+    --data-urlencode "username=${admin_user}" --data-urlencode "password=${admin_pass}" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)"
+  if [[ -z "${admin_token}" ]]; then
+    echo "warning: could not get a keycloak admin token, skipping spear-coordinator token exchange setup" >&2
+    return 0
+  fi
+  kc="https://${kc_host}/admin/realms/${AGENTS_NS}"
+
+  coord_id="$(curl -sk "${kc}/clients?clientId=spear-coordinator" -H "Authorization: Bearer ${admin_token}" \
+    | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "")')"
+  if [[ -z "${coord_id}" ]]; then
+    echo "warning: spear-coordinator client not found on ${AGENTS_NS}, skipping token exchange setup" >&2
+    return 0
+  fi
+
+  # standardFlowEnabled, redirectUris, directAccessGrantsEnabled already live
+  # in the realm import for a fresh install; this patches an already-imported
+  # realm (the import job itself is one time, see 01-keycloak-realm.yaml's header)
+  log "enabling standard flow on spear-coordinator for mint_spear_shield_token's own impersonation dance"
+  curl -sk -o /dev/null -X PUT "${kc}/clients/${coord_id}" \
+    -H "Authorization: Bearer ${admin_token}" -H "Content-Type: application/json" \
+    -d '{"standardFlowEnabled":true,"redirectUris":["https://spear-coordinator.internal/callback"],"directAccessGrantsEnabled":false}'
+
+  sa_user_id="$(curl -sk "${kc}/clients/${coord_id}/service-account-user" -H "Authorization: Bearer ${admin_token}" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+  rm_id="$(curl -sk "${kc}/clients?clientId=realm-management" -H "Authorization: Bearer ${admin_token}" \
+    | python3 -c 'import json,sys; c=json.load(sys.stdin); print(c[0]["id"] if c else "")')"
+  if [[ -z "${sa_user_id}" || -z "${rm_id}" ]]; then
+    echo "warning: could not resolve spear-coordinator's service account or realm-management client, skipping role grant" >&2
+    return 0
+  fi
+
+  existing_roles="$(curl -sk "${kc}/users/${sa_user_id}/role-mappings/clients/${rm_id}" -H "Authorization: Bearer ${admin_token}" \
+    | python3 -c 'import json,sys; print(" ".join(r["name"] for r in json.load(sys.stdin)))')"
+  local role_name role_json missing=()
+  for role_name in impersonation view-users; do
+    if ! printf '%s' " ${existing_roles} " | grep -q " ${role_name} "; then
+      missing+=("${role_name}")
+    fi
+  done
+  if (( ${#missing[@]} == 0 )); then
+    log "spear-coordinator already holds impersonation and view-users on realm-management"
+    return 0
+  fi
+  log "granting spear-coordinator: ${missing[*]} (realm-management)"
+  local roles_payload="["
+  for role_name in "${missing[@]}"; do
+    role_json="$(curl -sk "${kc}/clients/${rm_id}/roles/${role_name}" -H "Authorization: Bearer ${admin_token}")"
+    roles_payload+="${role_json},"
+  done
+  roles_payload="${roles_payload%,}]"
+  curl -sk -o /dev/null -X POST "${kc}/users/${sa_user_id}/role-mappings/clients/${rm_id}" \
+    -H "Authorization: Bearer ${admin_token}" -H "Content-Type: application/json" -d "${roles_payload}"
+}
+
 resolve_hosts() {
   log "resolving this cluster's own hostnames, never hardcoded"
   CLUSTER_DOMAIN="$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')"
@@ -492,6 +558,9 @@ main() {
 
   log "spire idp and clients-federated auth flow, live admin api only, not expressible in the realm import above"
   ensure_spiffe_federated_auth
+
+  log "spear-coordinator token exchange setup, live admin api only, same reason as above"
+  ensure_spear_coordinator_token_exchange
 
   log "spear-worktracker namespace"
   oc get namespace "${WORKTRACKER_NS}" >/dev/null 2>&1 || oc create namespace "${WORKTRACKER_NS}"
