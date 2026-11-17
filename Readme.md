@@ -318,14 +318,6 @@ Console navigation, under the SpearShield section:
 
 ## Troubleshooting
 
-General first moves:
-
-```
-oc whoami                                    # still logged in as cluster-admin?
-oc get pods -n <namespace>                   # which component is unhappy?
-oc logs -n <namespace> <pod-name>            # its own log
-```
-
 Known behaviors, all previously hit live and worked around in the scripts:
 
 | Symptom | Cause | Fix |
