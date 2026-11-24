@@ -38,7 +38,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "globals": "^17.4.0",
-    "i18next": "^23.11.5",
+    "i18next": "^26.3.4",
     "i18next-parser": "^9.4.0",
     "pluralize": "^8.0.0",
     "prettier": "^3.8.1",
